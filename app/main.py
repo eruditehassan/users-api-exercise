@@ -8,7 +8,7 @@ from typing import Annotated
 
 import httpx
 from fastapi import Depends, FastAPI, Query, Request, status
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import BaseModel
 
 from app.dummyjson import DummyJsonClient, UpstreamError, UpstreamTimeout
@@ -47,6 +47,12 @@ class ErrorResponse(BaseModel):
     """Body of every error response, matching FastAPI's own error shape."""
 
     detail: str
+
+
+@app.get("/", include_in_schema=False)
+def root() -> RedirectResponse:
+    """Send visitors at the bare address to the interactive documentation."""
+    return RedirectResponse(url="/docs")
 
 
 def get_dummyjson(request: Request) -> DummyJsonClient:

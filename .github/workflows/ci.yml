@@ -1,0 +1,79 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Offline tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version-file: .python-version
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Run the offline tests
+        run: pytest -v
+
+  deploy:
+    name: Deploy to Vercel
+    # Only pushes to main deploy, and only once the tests above have passed.
+    # Vercel's own Git deployments are switched off in vercel.json, so this is the only route to production.
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    concurrency:
+      group: production
+      cancel-in-progress: false
+    environment:
+      name: production
+      url: https://hassan-bukhari-users-api.vercel.app/docs
+    env:
+      PRODUCTION_URL: https://hassan-bukhari-users-api.vercel.app
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+    steps:
+      - name: Check out the tested commit
+        uses: actions/checkout@v7
+
+      - name: Deploy to production
+        run: npx --yes vercel@64.7.0 deploy --prod --yes --token "$VERCEL_TOKEN"
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+
+      - name: Check the deployed service responds
+        run: >
+          curl --fail --silent --show-error --output /dev/null
+          --retry 5 --retry-delay 5 --retry-all-errors --max-time 20
+          "$PRODUCTION_URL/openapi.json"
+
+      # This request goes through to DummyJSON, so a failure here may be an upstream outage
+      # rather than a problem with the deployment. It is reported as a warning, not a failed run.
+      - name: Check a live /users request (depends on DummyJSON)
+        continue-on-error: true
+        run: |
+          if curl --fail --silent --show-error --output users.json \
+               --retry 3 --retry-delay 5 --retry-all-errors --max-time 30 \
+               "$PRODUCTION_URL/users?firstName=Emily" \
+             && python3 -c 'import json; b = json.load(open("users.json")); assert b["count"] >= 1 and b["total"] >= b["count"]; print("total", b["total"], "count", b["count"])'; then
+            echo "Live /users request succeeded."
+          else
+            echo "::warning title=Live /users check::GET /users did not succeed. The deployment responded, so DummyJSON may be unavailable."
+            exit 1
+          fi

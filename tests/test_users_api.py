@@ -65,6 +65,13 @@ def test_empty_upstream_dataset_is_a_normal_response(api, upstream):
     assert response.json() == {"total": 0, "count": 0, "users": []}
 
 
+def test_root_redirects_to_the_documentation(api):
+    response = api.get("/", follow_redirects=False)
+
+    assert response.status_code == 307
+    assert response.headers["location"] == "/docs"
+
+
 # Filtering
 
 

@@ -1,6 +1,10 @@
 # Users Integration API
 
+[![CI](https://github.com/eruditehassan/users-api-exercise/actions/workflows/ci.yml/badge.svg)](https://github.com/eruditehassan/users-api-exercise/actions/workflows/ci.yml)
+
 This is my solution to the Integration Developer exercise. It's a small REST API, written in Python with FastAPI, that pulls every user from the [DummyJSON users API](https://dummyjson.com/docs/users), cuts each record down to five fields and lets you filter by first and last name.
+
+There's a running copy at [hassan-bukhari-users-api.vercel.app/docs](https://hassan-bukhari-users-api.vercel.app/docs) and a short write-up at [projects.hassanbukhari.com/users-api](https://projects.hassanbukhari.com/users-api). Everything below also works locally.
 
 ## Running it
 
@@ -57,6 +61,15 @@ There are also two tests that call the real DummyJSON API, to check it still beh
 ```bash
 pytest -m live
 ```
+
+## How it's deployed
+
+GitHub Actions ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs the offline tests on every pull request and every push to `main`.
+- A push to `main` deploys to Vercel only if those tests pass.
+- Vercel's own Git deployments are switched off in `vercel.json`, so a commit can't reach production any other way.
+- After deploying, the workflow checks that the service responds and then makes one real `/users` request. That last check goes through to DummyJSON, so if it fails the run shows a warning rather than failing. A DummyJSON outage isn't a problem with the deployment.
+
+The hosted copy is a demonstration on Vercel, not a production service, so the first request after a quiet spell can be slower while it starts up.
 
 ## Configuration
 
@@ -143,6 +156,8 @@ Beyond that:
 ## Project layout
 
 ```
+.github/workflows/ci.yml   tests on every push and pull request; deploys main after they pass
+vercel.json      turns off Vercel's own Git deployments
 app/
   main.py          FastAPI app, GET /users and error handling
   dummyjson.py     DummyJSON client: paging, validation, upstream errors
