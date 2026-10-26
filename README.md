@@ -1,39 +1,21 @@
 # Users Integration API
 
-A REST API that retrieves every user from the [DummyJSON Users API](https://dummyjson.com/docs/users), keeps five fields for each user and lets consumers filter by first and last name. Every response containing user data has the same structure, and the service fails clearly, rather than returning incomplete data, when the upstream API misbehaves.
+This is my solution to the Integration Developer exercise. It's a small REST API, written in Python with FastAPI, that pulls every user from the [DummyJSON users API](https://dummyjson.com/docs/users), cuts each record down to five fields and lets you filter by first and last name.
 
-Built with Python, FastAPI, httpx and Pydantic, and tested with pytest.
+## Running it
 
-## Requirements
-
-- Python 3.14 (developed and tested with 3.14.7).
-- Network access to `dummyjson.com` to run the service. The automated tests run offline.
-
-## Running the service
-
-macOS or Linux:
+You'll need Python 3.14 (I developed and tested it on 3.14.7).
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements-dev.txt
-uvicorn app.main:app --reload
-```
-
-Windows (PowerShell):
-
-```powershell
 python -m venv .venv
-.venv\Scripts\Activate.ps1
+source .venv/bin/activate          # Windows PowerShell: .venv\Scripts\Activate.ps1
 pip install -r requirements-dev.txt
 uvicorn app.main:app --reload
 ```
 
-`requirements-dev.txt` installs the runtime requirements plus the test tools; `requirements.txt` alone is enough to run the service.
+`requirements-dev.txt` includes the test tools. If you only want to run the API, `requirements.txt` is enough.
 
-The API is then available at `http://127.0.0.1:8000`. Interactive documentation, where each request below can be tried from the browser, is at `http://127.0.0.1:8000/docs`.
-
-## Example requests
+The API runs on `http://127.0.0.1:8000`. FastAPI also serves interactive docs at `http://127.0.0.1:8000/docs`, which is the quickest way to try the filters.
 
 ```bash
 curl "http://127.0.0.1:8000/users"
@@ -42,7 +24,7 @@ curl "http://127.0.0.1:8000/users?lastName=Smith"
 curl "http://127.0.0.1:8000/users?firstName=Emily&lastName=Smith"
 ```
 
-Response to `GET /users?firstName=Emily&lastName=Johnson` (DummyJSON data on 26 October 2026):
+For example, `GET /users?firstName=emily&lastName=JOHNSON` currently returns:
 
 ```json
 {
@@ -60,132 +42,116 @@ Response to `GET /users?firstName=Emily&lastName=Johnson` (DummyJSON data on 26 
 }
 ```
 
+`total` is the number of users DummyJSON reports before filtering; `count` is how many are in the response.
+
 ## Running the tests
 
 ```bash
 pytest
 ```
 
-This runs the offline suite. DummyJSON is replaced by an in-memory fake, so the results do not depend on the network or on the live data.
+The tests don't touch the network. I replaced DummyJSON with a small fake built on httpx's `MockTransport`, so the real paging, validation and error-handling code still runs, just against data I control. That makes it easy to test things like the second page failing after the first one worked, or the upstream sending the same page twice.
+
+There are also two tests that call the real DummyJSON API, to check it still behaves the way the fake assumes. They're excluded by default; run them with:
 
 ```bash
 pytest -m live
 ```
 
-This runs two contract tests against the real DummyJSON API, to confirm it still behaves as the offline tests assume. They are excluded from the default run.
-
 ## Configuration
 
-Settings are read from environment variables when the service starts.
+Everything has a default, so none of these need setting:
 
-| Variable | Default | Purpose |
+| Variable | Default | What it does |
 |---|---|---|
-| `UPSTREAM_BASE_URL` | `https://dummyjson.com` | Base URL of the users API |
-| `UPSTREAM_TIMEOUT_SECONDS` | `5` | httpx timeout for each connect, read, write and connection-pool wait |
-| `UPSTREAM_PAGE_SIZE` | `100` | Users requested per upstream page |
+| `UPSTREAM_BASE_URL` | `https://dummyjson.com` | Where the users API lives |
+| `UPSTREAM_TIMEOUT_SECONDS` | `5` | httpx timeout for each connect, read and write |
+| `UPSTREAM_PAGE_SIZE` | `100` | Users requested per page |
 
-## API
+## How it works
 
-### `GET /users`
+### Getting every user
 
-| Query parameter | Description |
-|---|---|
-| `firstName` | Optional. Exact first name to match, case-insensitive. |
-| `lastName` | Optional. Exact last name to match, case-insensitive. |
+`app/dummyjson.py` does the upstream work.
+- It asks for 100 users at a time with `limit` and `skip`, starting each request after the users it already has, until it holds as many as DummyJSON reports in `total`.
+- Before asking for the next page, it checks the one it just got. If anything doesn't add up, the request fails rather than returning a list that might be incomplete. That means:
+  - an empty page before everyone has arrived
+  - the same user id twice
+  - more users than `total`
+  - `total` changing partway through
 
-When both are supplied, a user must match both. Without filters, every user is returned.
+DummyJSON will also return everything in one go with `limit=0`. I didn't use that. The exercise is clear that a single response shouldn't be assumed to hold the full dataset, and paging keeps working whatever page size the upstream decides to serve.
 
-A successful response (`200 OK`) has these fields:
+### Keeping five fields
 
-| Field | Meaning |
-|---|---|
-| `total` | Users reported by DummyJSON, before filtering |
-| `count` | Users included in this response, after filtering |
-| `users` | The matching users in upstream order, each with `id`, `firstName`, `lastName`, `email` and `phone` |
+`app/users.py` has a `User` model with just the five fields.
+- Upstream records are parsed straight into it, so everything else is dropped as soon as it arrives. DummyJSON's (synthetic) records include passwords, card numbers and addresses.
+- I turned on Pydantic's strict mode, so a wrong type, such as an id sent as the string `"1"`, is treated as an error instead of being quietly converted.
+- I also send DummyJSON's `select` parameter so it only sends the fields I need, but nothing depends on that.
 
-No match is still a `200 OK`, with `count` 0 and an empty `users` list.
+### Filtering
 
-Errors return `{"detail": "<reason>"}` and never contain user data:
+Filtering happens in this service rather than through DummyJSON's `/users/filter` endpoint, which takes one field at a time and is case-sensitive.
+- Names have to match exactly, ignoring case; I used `casefold()` rather than `lower()`.
+- When both filters are given, a user has to match both.
+- No match is still a normal `200` with `count` 0 and an empty list.
 
-| Status | When | `detail` |
-|---|---|---|
-| `504 Gateway Timeout` | The upstream timed out on any page | Upstream user service timed out |
-| `502 Bad Gateway` | The upstream returned an error status | Upstream user service returned HTTP 503 |
-| `502 Bad Gateway` | The upstream could not be reached | Could not reach upstream user service |
-| `502 Bad Gateway` | The body was not JSON, had the wrong shape, or a user record had a missing or wrongly typed field | Upstream user service returned an unexpected response |
-| `502 Bad Gateway` | The pages were inconsistent: an empty page before all users arrived, a repeated user id, more users than `total`, or `total` changing between pages | Upstream user service returned an unexpected response: empty page before all users were received |
+### When the upstream goes wrong
 
-## Approach and decisions
+If anything fails on any page, the whole request fails:
 
-**Retrieving every user.**
-- The service requests pages with `limit` and `skip`, starting each request after the users already received, until it holds as many distinct users as the upstream reports in `total`.
-- Each page is checked before the next one is requested. An empty page before `total` is reached, a user id seen twice, more users than `total`, or `total` changing between pages stops the request with a 502.
-- DummyJSON also accepts `limit=0` to return everything at once. That was not used: the exercise asks for paging, and the loop works whatever page size the upstream serves.
+- a timeout returns **504 Gateway Timeout**
+- an error status, a connection failure, or a response that's malformed or inconsistent returns **502 Bad Gateway**
 
-**Publishing only five fields.**
-- The `User` model declares the five published fields. Upstream records are parsed into it as they arrive, so every other field is discarded at the boundary and cannot reach a consumer. DummyJSON's synthetic records include passwords, card numbers and addresses.
-- The upstream request also uses `select` to ask for those fields only, but the service does not depend on it.
+I used 502/504 rather than 500 because the problem is with the service this one depends on, not with this service.
 
-**Strict validation.** Pydantic's strict mode rejects a value of the wrong type instead of converting it; for example, an `id` of `"1"` is an error rather than `1`. Upstream values are therefore passed through unchanged, or the request fails.
+The body is `{"detail": "..."}` with a short fixed message, for example `"Upstream user service returned HTTP 500"`. It never includes the upstream's response or the values that failed validation. Each failure is logged as one warning line, with no names or query strings in it.
 
-**Filtering in the service.**
-- DummyJSON's `/users/filter` matches one field per request and is documented as case-sensitive, and `total` must be the count before filtering. So the service retrieves every user and filters in memory.
-- Matching is exact and case-insensitive, using `casefold()`, which also handles names such as "Straße".
-- An empty or whitespace-only filter counts as not supplied.
+### Sync rather than async
 
-**Failing clearly.**
-- If any page fails, the whole request fails, so a partial list is never returned with `200 OK`. A timeout is a `504 Gateway Timeout`; anything else that goes wrong upstream is a `502 Bad Gateway`. Both mean the problem lies with a service this one depends on, not with the consumer's request or this service itself.
-- Error messages are fixed strings. They never include upstream response bodies or the values that failed validation.
-- Each failure is logged as a warning with the same message.
-
-**A synchronous route.** FastAPI runs ordinary `def` routes in a thread pool, which suits the blocking httpx client. An async route could serve more concurrent requests while each waits on the upstream, but there is no such requirement here, so the simpler model was kept.
-
-**Testing at the HTTP boundary.**
-- The tests replace DummyJSON with httpx's `MockTransport`, so the service's own paging, validation and error handling run in every test.
-- The fake serves records that include fields the API must not return, and can inject a fault on a chosen request, such as an error on the second page after the first succeeded.
+The route is a plain `def`, which FastAPI runs in a thread pool, and that suits the synchronous httpx client. Async would help with a lot of concurrent requests, but nothing here needs that, and the sync version is simpler to follow.
 
 ## Assumptions
 
-- Name filters are exact, whole-value and case-insensitive, after trimming surrounding whitespace from the query value.
-- An empty or whitespace-only filter value means the filter was not supplied.
+- "Filter by first name" means an exact match on the whole name, ignoring case and surrounding spaces. So `Em` doesn't match Emily.
+- An empty filter such as `?firstName=` is treated as no filter.
 - Unknown query parameters are ignored.
-- `total` is the upstream's own total; `count` is the number of users returned after filtering.
-- Users are returned in upstream order.
-- Upstream values are passed through unchanged; wrong types are rejected rather than converted.
-- Data is fetched fresh on every request. Nothing is cached.
+- Users come back in the order DummyJSON returns them.
+- Values are passed through as they are. I don't reformat phone numbers or validate emails, since this service doesn't own the data.
+- Data is fetched fresh on every request.
 
 ## Limitations
 
-- Every request fetches every page from the upstream.
-- There is no overall deadline for a request. The timeout limits each connect, read, write and pool wait, so a slow upstream can make a request take longer than the timeout value.
-- The `total` check detects some changes to the dataset during a request, not all. A user removed and another added between pages would go unnoticed.
-- There is no authentication or rate limiting.
+- Every request fetches all the pages from DummyJSON, which is three requests at the moment.
+- The timeout applies to each connect, read and write rather than the whole request. There's no overall deadline, so a slow upstream can make a request take longer than 5 seconds.
+- The `total` check catches users being added or removed mid-request, but not one being removed and another added between pages.
+- There's no authentication or rate limiting.
 
-## Production considerations
+## What I'd change for production
 
-Three changes would matter most for a production integration service, each with a cost:
+These are the three things I'd look at first, each with a trade-off:
 
-- **Caching with an expiry.** If the agreed freshness requirements permit it, caching the retrieved list would cut upstream calls and response times. The cost is that consumers may see data up to one expiry period old, so the expiry would be set with the data owner.
-- **Retries with backoff.** Retrying timeouts and 5xx responses on these read-only requests would recover brief upstream failures. Retries add delay and upstream load, so they would be capped and kept within an overall deadline for the request.
-- **Monitoring.** Structured logs with a request id, plus metrics for upstream latency and error rate with alerts, so failures are noticed and diagnosed quickly, without logging personal data.
+- **Caching.** If the freshness requirements allow it, caching the user list for a short time would cut the upstream calls and make responses much faster. The cost is that consumers could see data up to one expiry period old, so the expiry would need agreeing with whoever owns the data.
+- **Retries.** These are read-only requests, so retrying timeouts and 5xx errors with backoff would ride out short upstream blips. Retries add latency and extra load on the upstream, so I'd cap them and put an overall deadline on the request.
+- **Monitoring.** Structured logs with a request id, plus metrics for upstream latency and error rates with alerts on them, so problems get noticed quickly. Again, without logging personal data.
 
-Beyond these:
-- The service would sit behind an API gateway, such as Gravitee, for authentication, rate limiting and publishing its OpenAPI specification. It would run as a container with health checks.
-- At much larger scale, it would page its own responses rather than load every user on each request.
-- The upstream client would move from httpx to httpx2, the maintained continuation of httpx, which Starlette's test client already uses.
+Beyond that:
+- I'd put it behind an API gateway such as Gravitee for authentication, rate limiting and publishing the OpenAPI spec, and run it as a container with health checks.
+- If the dataset got much bigger, I'd sync users into a local store and page our own responses instead of loading everyone on every request.
+- I'd move the client from httpx to httpx2, the maintained continuation of httpx that Starlette's test client already uses.
 
-## Project structure
+## Project layout
 
 ```
 app/
-  main.py          FastAPI application: configuration, GET /users, error responses
-  dummyjson.py     DummyJSON client: paging, validation and upstream errors
-  users.py         User and response models, name filtering
+  main.py          FastAPI app, GET /users and error handling
+  dummyjson.py     DummyJSON client: paging, validation, upstream errors
+  users.py         User and response models, filtering
 tests/
-  fakes.py         In-memory DummyJSON used by the offline tests
-  conftest.py      Test fixtures
-  test_users_api.py       Endpoint behaviour: retrieval, filtering, failures, paging checks
-  test_filtering.py       Name-matching rules on their own
-  test_startup.py         Startup wiring and shutdown, run offline
-  test_live_dummyjson.py  Contract tests against the real API (pytest -m live)
+  fakes.py         fake DummyJSON used by the tests
+  conftest.py      fixtures
+  test_users_api.py       endpoint tests
+  test_filtering.py       filtering rules on their own
+  test_startup.py         startup and shutdown wiring
+  test_live_dummyjson.py  checks against the real API (pytest -m live)
 ```
