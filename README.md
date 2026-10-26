@@ -165,7 +165,7 @@ Errors return `{"detail": "<reason>"}` and never contain user data:
 
 Three changes would matter most for a production integration service, each with a cost:
 
-- **Caching with an expiry.** User data changes rarely, so caching the retrieved list would cut upstream calls and response times. The cost is serving data that may be stale until the cache expires, so the expiry would be agreed with the data owner.
+- **Caching with an expiry.** If the agreed freshness requirements permit it, caching the retrieved list would cut upstream calls and response times. The cost is that consumers may see data up to one expiry period old, so the expiry would be set with the data owner.
 - **Retries with backoff.** Retrying timeouts and 5xx responses on these read-only requests would recover brief upstream failures. Retries add delay and upstream load, so they would be capped and kept within an overall deadline for the request.
 - **Monitoring.** Structured logs with a request id, plus metrics for upstream latency and error rate with alerts, so failures are noticed and diagnosed quickly, without logging personal data.
 
@@ -186,5 +186,6 @@ tests/
   conftest.py      Test fixtures
   test_users_api.py       Endpoint behaviour: retrieval, filtering, failures, paging checks
   test_filtering.py       Name-matching rules on their own
+  test_startup.py         Startup wiring and shutdown, run offline
   test_live_dummyjson.py  Contract tests against the real API (pytest -m live)
 ```
