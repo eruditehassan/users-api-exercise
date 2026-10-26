@@ -41,13 +41,12 @@ def filter_users(
     return [
         user
         for user in users
-        if (wanted_first is None or user.firstName.casefold() == wanted_first)
-        and (wanted_last is None or user.lastName.casefold() == wanted_last)
+        if (wanted_first is None or user.firstName == wanted_first)
+        and (wanted_last is None or user.lastName == wanted_last)
     ]
 
 
 def _normalise(value: str | None) -> str | None:
     if value is None or not value.strip():
         return None
-    # casefold() rather than lower(): it also matches "Straße" with "STRASSE".
-    return value.strip().casefold()
+    return value.strip()
