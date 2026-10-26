@@ -1,4 +1,4 @@
-"""HTTP API: GET /users returns every DummyJSON user in a consistent, filterable form."""
+"""FastAPI app exposing GET /users."""
 
 import logging
 import os
@@ -16,12 +16,14 @@ from app.users import UsersResponse, filter_users
 
 logger = logging.getLogger(__name__)
 
+LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s: %(message)s"
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """Create one upstream HTTP client at startup, so connections are reused, and close it at shutdown."""
-    # Uvicorn configures only its own loggers; this gives the service's warnings a level and timestamp.
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    """One shared HTTP client for the app's lifetime, so connections are reused."""
+    # Uvicorn only configures its own loggers, so give ours a level and timestamp.
+    logging.basicConfig(level=logging.INFO, format=LOG_FORMAT)
     http = httpx.Client(
         base_url=os.environ.get("UPSTREAM_BASE_URL", "https://dummyjson.com"),
         timeout=float(os.environ.get("UPSTREAM_TIMEOUT_SECONDS", "5")),
@@ -37,26 +39,25 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(
     title="Users Integration API",
-    summary="Retrieves every user from DummyJSON and returns them in a consistent, filterable form.",
+    summary="Every DummyJSON user, trimmed to five fields and filterable by name.",
     version="1.0.0",
     lifespan=lifespan,
 )
 
 
 class ErrorResponse(BaseModel):
-    """Body of every error response, matching FastAPI's own error shape."""
+    """Same shape as FastAPI's own error responses."""
 
     detail: str
 
 
 @app.get("/", include_in_schema=False)
 def root() -> RedirectResponse:
-    """Send visitors at the bare address to the interactive documentation."""
     return RedirectResponse(url="/docs")
 
 
 def get_dummyjson(request: Request) -> DummyJsonClient:
-    """Provide the shared upstream client. Tests replace this dependency with a fake."""
+    """Overridden in the tests."""
     return request.app.state.dummyjson
 
 
@@ -84,10 +85,10 @@ def list_users(
         str | None, Query(description="Exact last name to match, case-insensitive.")
     ] = None,
 ) -> UsersResponse:
-    """Return every upstream user, optionally filtered by first name, last name or both.
+    """Every upstream user, optionally filtered by first name, last name or both.
 
-    When both filters are supplied, a user must match both. `total` is the upstream
-    count before filtering; `count` is the number of users in this response.
+    When both filters are given, a user has to match both. `total` is DummyJSON's
+    count before filtering; `count` is the number of users returned.
     """
     total, users = client.fetch_all_users()
     matched = filter_users(users, firstName, lastName)
@@ -96,11 +97,11 @@ def list_users(
 
 @app.exception_handler(UpstreamError)
 async def handle_upstream_error(request: Request, exc: UpstreamError) -> JSONResponse:
-    """Turn an upstream failure into 504 (timeout) or 502 (anything else). No partial data is returned."""
+    """504 for a timeout, 502 for anything else. Never a partial result."""
     if isinstance(exc, UpstreamTimeout):
         status_code = status.HTTP_504_GATEWAY_TIMEOUT
     else:
         status_code = status.HTTP_502_BAD_GATEWAY
-    # The message is a fixed string from this service, so it is safe to log: no user data or upstream body.
+    # exc's message is one of our fixed strings, so this never logs user data.
     logger.warning("%s %s failed with %d: %s", request.method, request.url.path, status_code, exc)
     return JSONResponse(status_code=status_code, content={"detail": str(exc)})

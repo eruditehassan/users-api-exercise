@@ -62,12 +62,18 @@ There are also two tests that call the real DummyJSON API, to check it still beh
 pytest -m live
 ```
 
+Linting and formatting use ruff, and CI runs both checks:
+
+```bash
+ruff check .
+ruff format --check .
+```
+
 ## How it's deployed
 
-GitHub Actions ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs the offline tests on every pull request and every push to `main`.
-- A push to `main` deploys to Vercel only if those tests pass.
-- Vercel's own Git deployments are switched off in `vercel.json`, so a commit can't reach production any other way.
-- After deploying, the workflow checks that the service responds and then makes one real `/users` request. That last check goes through to DummyJSON, so if it fails the run shows a warning rather than failing. A DummyJSON outage isn't a problem with the deployment.
+GitHub Actions ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) lints the code and runs the offline tests on every pull request and every push to `main`. Pushes to `main` then deploy to Vercel, but only if those checks pass. Vercel's own Git deployments are switched off in `vercel.json`, so there's no other way for a commit to reach production.
+
+After deploying, the workflow checks the service responds and makes one real `/users` request. That request goes through to DummyJSON, so if it fails the run shows a warning instead of failing; a DummyJSON outage isn't a problem with the deployment.
 
 The hosted copy is a demonstration on Vercel, not a production service, so the first request after a quiet spell can be slower while it starts up.
 
@@ -97,17 +103,13 @@ DummyJSON will also return everything in one go with `limit=0`. I didn't use tha
 
 ### Keeping five fields
 
-`app/users.py` has a `User` model with just the five fields.
-- Upstream records are parsed straight into it, so everything else is dropped as soon as it arrives. DummyJSON's (synthetic) records include passwords, card numbers and addresses.
-- I turned on Pydantic's strict mode, so a wrong type, such as an id sent as the string `"1"`, is treated as an error instead of being quietly converted.
-- I also send DummyJSON's `select` parameter so it only sends the fields I need, but nothing depends on that.
+`app/users.py` has a `User` model with just the five fields, and upstream records are parsed straight into it, so everything else is dropped as soon as it arrives. DummyJSON's records are synthetic, but they include passwords, card numbers and addresses.
+
+The model uses Pydantic's strict mode, so a wrong type, like an id sent as the string `"1"`, is an error instead of being quietly converted. I also pass DummyJSON's `select` parameter so it only sends the fields I need, but nothing relies on it.
 
 ### Filtering
 
-Filtering happens in this service rather than through DummyJSON's `/users/filter` endpoint, which takes one field at a time and is case-sensitive.
-- Names have to match exactly, ignoring case; I used `casefold()` rather than `lower()`.
-- When both filters are given, a user has to match both.
-- No match is still a normal `200` with `count` 0 and an empty list.
+Filtering happens here rather than through DummyJSON's `/users/filter` endpoint, which only takes one field at a time and is case-sensitive. Names have to match exactly, ignoring case (`casefold()` rather than `lower()`), and when both filters are given a user has to match both. No match is still a normal `200`, with `count` 0 and an empty list.
 
 ### When the upstream goes wrong
 
@@ -156,17 +158,18 @@ Beyond that:
 ## Project layout
 
 ```
-.github/workflows/ci.yml   tests on every push and pull request; deploys main after they pass
-vercel.json      turns off Vercel's own Git deployments
 app/
-  main.py          FastAPI app, GET /users and error handling
-  dummyjson.py     DummyJSON client: paging, validation, upstream errors
-  users.py         User and response models, filtering
+  main.py                 FastAPI app, GET /users and error handling
+  dummyjson.py            DummyJSON client: paging, validation, upstream errors
+  users.py                User and response models, filtering
 tests/
-  fakes.py         fake DummyJSON used by the tests
-  conftest.py      fixtures
+  fakes.py                fake DummyJSON used by the tests
+  conftest.py             fixtures
   test_users_api.py       endpoint tests
   test_filtering.py       filtering rules on their own
   test_startup.py         startup and shutdown wiring
   test_live_dummyjson.py  checks against the real API (pytest -m live)
+.github/workflows/ci.yml  lint and test every push and PR; deploy main once they pass
+vercel.json               turns off Vercel's own Git deployments
+pytest.ini, ruff.toml     test and lint settings
 ```

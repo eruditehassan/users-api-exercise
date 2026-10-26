@@ -27,6 +27,11 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements-dev.txt
 
+      - name: Lint and check formatting
+        run: |
+          ruff check .
+          ruff format --check .
+
       - name: Run the offline tests
         run: pytest -v
 

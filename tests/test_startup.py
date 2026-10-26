@@ -1,7 +1,7 @@
-"""The real startup path, run offline: settings reach the upstream client, and it is closed at shutdown.
+"""The app's real startup and shutdown, run offline.
 
-The endpoint tests replace the client dependency, so they never run the app's
-lifespan. This test runs it, with only the network replaced by the fake.
+The endpoint tests replace the client dependency, so they never run the lifespan.
+This one does, with only the network swapped for the fake.
 """
 
 import httpx

@@ -1,28 +1,28 @@
-"""Client for the DummyJSON users API: paging, validation and failure handling."""
+"""DummyJSON users client: paging, validation and upstream errors."""
 
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.users import User
 
-# DummyJSON always includes "id", so only the other published fields are selected.
+# DummyJSON always includes "id", so only the other fields need selecting.
 SELECTED_FIELDS = "firstName,lastName,email,phone"
 
 
 class UpstreamError(Exception):
-    """The upstream API failed, or returned data this service cannot rely on.
+    """The upstream failed or sent something we can't rely on.
 
-    Messages are written for API consumers. They never include upstream
-    response bodies or the values that failed validation.
+    The message goes back to the consumer, so it never includes the upstream
+    body or the values that failed validation.
     """
 
 
 class UpstreamTimeout(UpstreamError):
-    """The upstream API did not respond within the configured timeout."""
+    """The upstream didn't respond within the timeout."""
 
 
 class _Page(BaseModel):
-    """One page of the upstream /users response. Other keys, such as skip and limit, are ignored."""
+    """One page of GET /users. skip and limit are ignored; see fetch_all_users."""
 
     model_config = ConfigDict(strict=True, extra="ignore")
 
@@ -31,8 +31,6 @@ class _Page(BaseModel):
 
 
 class DummyJsonClient:
-    """Retrieves the complete user list from DummyJSON, one page at a time."""
-
     def __init__(self, http: httpx.Client, page_size: int = 100) -> None:
         if page_size < 1:
             raise ValueError("page_size must be at least 1")
@@ -40,10 +38,10 @@ class DummyJsonClient:
         self._page_size = page_size
 
     def fetch_all_users(self) -> tuple[int, list[User]]:
-        """Return the upstream total and every user, or raise UpstreamError.
+        """Return (total, users), or raise UpstreamError.
 
-        Each page is checked before the next one is requested, so the result is
-        either complete or an error. A partial list is never returned.
+        Each page is checked before asking for the next, so this either returns
+        every user or fails. It never returns a partial list.
         """
         users: list[User] = []
         seen_ids: set[int] = set()
@@ -76,7 +74,7 @@ class DummyJsonClient:
             response = self._http.get("/users", params=params)
             response.raise_for_status()
         except httpx.TimeoutException as exc:
-            # Caught before RequestError, which is its parent class.
+            # Has to come before RequestError, which is its parent class.
             raise UpstreamTimeout("Upstream user service timed out") from exc
         except httpx.HTTPStatusError as exc:
             raise UpstreamError(
@@ -86,7 +84,7 @@ class DummyJsonClient:
             raise UpstreamError("Could not reach upstream user service") from exc
 
         try:
-            # One ValidationError covers a body that is not JSON, the wrong shape and wrong types.
+            # Covers a body that isn't JSON, the wrong shape and wrong field types.
             return _Page.model_validate_json(response.content)
         except ValidationError as exc:
             raise _unexpected() from exc

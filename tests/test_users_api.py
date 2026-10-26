@@ -154,7 +154,9 @@ def test_unreachable_upstream_returns_502(api, upstream):
     [
         pytest.param(httpx.Response(200, text="<html>Maintenance</html>"), id="body-not-json"),
         pytest.param(httpx.Response(200, json={"total": 5}), id="users-missing"),
-        pytest.param(page_response([without(USERS[0], "email")], total=5), id="record-missing-email"),
+        pytest.param(
+            page_response([without(USERS[0], "email")], total=5), id="record-missing-email"
+        ),
         pytest.param(page_response([{**USERS[0], "id": "1"}], total=5), id="id-is-a-string"),
         pytest.param(page_response([USERS[0]], total=0), id="users-despite-zero-total"),
     ],

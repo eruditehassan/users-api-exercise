@@ -1,4 +1,4 @@
-"""The published user record, the response contract and the name filters."""
+"""User model, response model and name filtering."""
 
 from collections.abc import Iterable
 
@@ -6,13 +6,10 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class User(BaseModel):
-    """The five fields this service publishes for each user.
+    """The five fields we publish.
 
-    Upstream records carry many more fields. Anything not declared here is
-    dropped when a record is parsed, so it can never reach a consumer.
-    Strict mode rejects a value of the wrong type instead of converting it,
-    which means upstream values are either passed through unchanged or the
-    request fails.
+    Anything else in an upstream record is dropped when it's parsed. Strict mode
+    means a value of the wrong type is an error rather than being converted.
     """
 
     model_config = ConfigDict(strict=True, extra="ignore")
@@ -25,8 +22,6 @@ class User(BaseModel):
 
 
 class UsersResponse(BaseModel):
-    """Body of every response that contains user data."""
-
     total: int = Field(description="Users reported by the upstream API, before filtering.")
     count: int = Field(description="Users included in this response, after filtering.")
     users: list[User]
@@ -37,10 +32,9 @@ def filter_users(
     first_name: str | None = None,
     last_name: str | None = None,
 ) -> list[User]:
-    """Return the users whose names match every supplied filter, in their original order.
+    """Users matching every supplied filter, in their original order.
 
-    Matching is exact and case-insensitive. A filter that is missing, empty or
-    only whitespace counts as not supplied.
+    Matching is exact and case-insensitive. Empty or whitespace-only filters are ignored.
     """
     wanted_first = _normalise(first_name)
     wanted_last = _normalise(last_name)
@@ -53,8 +47,7 @@ def filter_users(
 
 
 def _normalise(value: str | None) -> str | None:
-    """Prepare a filter value for comparison, or return None when there is nothing to match."""
     if value is None or not value.strip():
         return None
-    # casefold() rather than lower(): it also handles cases such as "Straße" and "STRASSE".
+    # casefold() rather than lower(): it also matches "Straße" with "STRASSE".
     return value.strip().casefold()
