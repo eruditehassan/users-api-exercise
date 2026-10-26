@@ -1,0 +1,4 @@
+-r requirements.txt
+# Starlette's TestClient now runs on httpx2, the maintained continuation of httpx.
+httpx2==2.16.0
+pytest==9.1.1
